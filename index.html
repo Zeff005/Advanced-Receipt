@@ -26,7 +26,6 @@
   input, select, textarea {
     width:100%; padding:8px; border-radius:8px; border:1px solid #e6e9ef; box-sizing:border-box;
   }
-  textarea { min-height:64px; }
   .controls { display:flex; gap:8px; margin-top:12px; }
   button { padding:8px 12px; border-radius:8px; border:none; background:#0ea5a4; color:#fff; cursor:pointer; font-size:14px; }
   button:hover { background:#0d8f8e; }
@@ -121,14 +120,8 @@
         <input type="number" id="fuelused" placeholder="e.g. 20000">
       </label>
 
-      <label>Additional Line Items (description|amount)
-        <textarea id="lines">Flight allowance|0.00
-Fuel surcharge|0.00</textarea>
-      </label>
-
       <div class="controls">
-        <button type="button" id="calcBtn">Calculate</button>
-        <button type="button" id="printBtn">Print / Save PDF</button>
+        <button type="button" id="sendBtn">Send</button>
       </div>
       <div class="small" style="margin-top:8px">Tip: choose Rank/Aircraft to auto-fill Base Rate & Multiplier.</div>
     </div>
@@ -159,27 +152,12 @@ Fuel surcharge|0.00</textarea>
           </tbody>
         </table>
 
-        <h4 style="margin-top:12px;margin-bottom:6px">Line Items</h4>
-        <table id="itemsTable">
-          <thead>
-            <tr>
-              <th>Description</th>
-              <th class="right">Amount (₹)</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-          <tfoot>
-            <tr><td class="right"><strong>Subtotal</strong></td><td class="right" id="subt">0.00</td></tr>
-            <tr><td class="right">Taxes / Fees</td><td class="right" id="taxes">0.00</td></tr>
-            <tr><td class="right"><strong>Total (lines + bonus)</strong></td><td class="right" id="linetotal">0.00</td></tr>
-          </tfoot>
-        </table>
-
         <table style="margin-top:8px">
           <tbody>
             <tr><td><strong>Earnings (Flight)</strong></td><td class="right" id="rearn">0.00</td></tr>
             <tr><td><strong>Payload Bonus</strong></td><td class="right" id="rbonus">0.00</td></tr>
-            <tr><td><strong>Grand Total (Earnings + Extras + Bonus)</strong></td><td class="right" id="grand">0.00</td></tr>
+            <tr><td><strong>Deductions (Taxes, Misc)</strong></td><td class="right" id="rded">0.00</td></tr>
+            <tr><td><strong>Grand Total (Earnings + Bonus - Deductions)</strong></td><td class="right" id="grand">0.00</td></tr>
             <tr><td><strong>Estimated Earnings (USD)</strong></td><td class="right" id="rusd">$0.00</td></tr>
           </tbody>
         </table>
@@ -195,7 +173,7 @@ function asNumber(x){var n=Number(String(x).replace(/[^0-9.-]/g,''));return isNa
 function parseTimeToHours(s){if(!s)return 0;s=String(s).trim();if(s.includes(':')){var p=s.split(':').map(Number);return(p[0]||0)+(p[1]||0)/60+(p[2]||0)/3600;}var n=Number(s);return isNaN(n)?0:n;}
 function currency(n){return'₹'+Number(Math.round(n*100)/100).toFixed(2);}
 
-function calculate(){
+function calculateAndSend(){
   var pilot=document.getElementById('pilot').value||'';
   var rankEl=document.getElementById('rank');
   var rank=rankEl.value;
@@ -209,6 +187,7 @@ function calculate(){
 
   var ftime=document.getElementById('ftime').value;
   var hrs=parseTimeToHours(ftime);
+  hrs=Math.round(hrs*100)/100; // round to 2 decimals
 
   var callsign=document.getElementById('callsign').value||'';
   var flightnum=document.getElementById('flightnum').value||'';
@@ -219,33 +198,25 @@ function calculate(){
   var cargo=asNumber(document.getElementById('cargo').value);
   var fuelused=asNumber(document.getElementById('fuelused').value);
 
-  // Line items
-  var linesText=document.getElementById('lines').value.trim();
-  var lines=[];
-  if(linesText){linesText.split('\n').forEach(function(line){
-    var p=line.split('|'); lines.push({desc:p[0].trim(), amt:asNumber(p[1]||0)});
-  });}
-
-  var subtotal=0; lines.forEach(function(l){subtotal+=l.amt;});
-  var taxes=0; // can modify if needed
-  var linetotal=subtotal+taxes;
-
   // Earnings
   var earnings=Math.round(hrs*baseRate*mult*100)/100;
 
-  // Payload bonus calculation
+  // Payload bonus
   var seatCapMap={'A319':136,'A320':175,'B738':189,'B737 MAX':189,'A321':239,'B788':364,'B789':364,'B77W':503,'B77L':441,'B744':416,'A350':440};
   var capacity=seatCapMap[aircraft]||0;
   var LF=capacity?Math.min(passengers/capacity,1):0;
   var Payload=passengers*95+cargo;
   var PPP=fuelused?Payload/fuelused:0;
-  var PPP_ref=1; // reference ratio
+  var PPP_ref=1;
   var efficiencyRatio=PPP/PPP_ref;
   var score=(LF+efficiencyRatio)/2;
-  if(score>1) score=1; // just in case
+  if(score>1) score=1;
   var payloadBonus=Math.min(score*maxBonus,maxBonus);
 
-  var grand=Math.round((earnings+linetotal+payloadBonus)*100)/100;
+  // Deductions
+  var deductions=Math.round(0.15*earnings*100)/100;
+
+  var grand=Math.round((earnings+payloadBonus-deductions)*100)/100;
 
   // Update receipt
   var today=new Date();
@@ -262,20 +233,9 @@ function calculate(){
   document.getElementById('rftime').textContent=ftime||'-';
   document.getElementById('rbase').textContent=currency(baseRate);
   document.getElementById('rmult').textContent=mult.toFixed(2);
-
-  var tbody=document.querySelector('#itemsTable tbody');
-  tbody.innerHTML='';
-  lines.forEach(function(l){
-    var tr=document.createElement('tr');
-    tr.innerHTML='<td>'+l.desc+'</td><td class="right">'+currency(l.amt)+'</td>';
-    tbody.appendChild(tr);
-  });
-
-  document.getElementById('subt').textContent=currency(subtotal);
-  document.getElementById('taxes').textContent=currency(taxes);
-  document.getElementById('linetotal').textContent=currency(linetotal);
   document.getElementById('rearn').textContent=currency(earnings);
   document.getElementById('rbonus').textContent=currency(payloadBonus);
+  document.getElementById('rded').textContent=currency(deductions);
   document.getElementById('grand').textContent=currency(grand);
 
   // INR→USD conversion
@@ -284,19 +244,42 @@ function calculate(){
       var rate=data.rates.USD||0;
       document.getElementById('rusd').textContent='$'+(grand*rate).toFixed(2);
     }).catch(()=>{document.getElementById('rusd').textContent='$0.00';});
+
+  // Discord webhook
+  const webhookURL = "https://discordapp.com/api/webhooks/1424101218283946128/GuS7iqwSLSZyRR6yYgqu2yjjn3Y4nvEq6CG0rb_yT_lZxEdQaRGjGcSZvCDOtWf2GOHN";
+  const embedPayload = {
+    embeds: [{
+      title: `INVA Flight Report — ${pilot || 'Unknown Pilot'}`,
+      color: 7506394,
+      fields: [
+        { name: 'Rank', value: rank || '-', inline: true },
+        { name: 'Aircraft', value: aircraft || '-', inline: true },
+        { name: 'Departure', value: depicao || '-', inline: true },
+        { name: 'Arrival', value: arricao || '-', inline: true },
+        { name: 'Flight Time', value: ftime || '-', inline: true },
+        { name: 'Passengers', value: passengers.toString(), inline: true },
+        { name: 'Cargo (kg)', value: cargo.toString(), inline: true },
+        { name: 'Fuel Used (kg)', value: fuelused.toString(), inline: true },
+        { name: 'Grand Total Earnings', value: currency(grand), inline: false }
+      ],
+      footer: { text: `INVA — Career Mode | ${new Date().toLocaleString()}` }
+    }]
+  };
+  fetch(webhookURL, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(embedPayload)})
+    .then(()=>console.log('Sent embed to Discord'))
+    .catch(e=>console.error('Discord webhook error:', e));
 }
 
-document.getElementById('calcBtn').addEventListener('click',calculate);
-document.getElementById('printBtn').addEventListener('click',function(){calculate(); setTimeout(()=>window.print(),150);});
+document.getElementById('sendBtn').addEventListener('click', calculateAndSend);
 
-// Live updates
-['pilot','rank','aircraft','ftime','lines','flightnum','depicao','arricao','callsign','passengers','cargo','fuelused'].forEach(function(id){
+// Live updates for receipt
+['pilot','rank','aircraft','ftime','flightnum','depicao','arricao','callsign','passengers','cargo','fuelused'].forEach(function(id){
   var el=document.getElementById(id);
-  el.addEventListener('input',calculate);
-  el.addEventListener('change',calculate);
+  el.addEventListener('input',calculateAndSend);
+  el.addEventListener('change',calculateAndSend);
 });
 
-calculate();
+calculateAndSend();
 </script>
 
 </body>
